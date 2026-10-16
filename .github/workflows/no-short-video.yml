@@ -1,0 +1,69 @@
+name: no short video
+
+# Rejects any pull request that proposes short video, the way Instagram, Facebook,
+# or TikTok do it: a comment says why, then the pull request is closed.
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  reject:
+    name: No short video
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Reject the proposal
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+
+          # The proposal lives in the title, the body, or the branch name.
+          proposal="$(printf '%s\n%s\n%s\n' "$PR_TITLE" "$PR_BODY" "$PR_BRANCH" | tr '[:upper:]' '[:lower:]')"
+          pattern='\b(tiktok|tik ?tok|instagram|snapchat|reels?|shorts|short[ -]?videos?|vertical[ -]?videos?|vine)\b'
+
+          if ! grep -Eq "$pattern" <<< "$proposal"; then
+            echo "No short video proposal. Carry on."
+            exit 0
+          fi
+
+          match="$(grep -Eo "$pattern" <<< "$proposal" | head -n 1)"
+
+          commented=true
+          gh pr comment "$PR_NUMBER" --body-file - <<'EOF' || commented=false
+          **Thank you for the contribution!** Genuinely. We read it twice, printed it, and framed it.
+
+          devnull is a social network for developers. A commit is text, 3 to 280 characters. A log is a list you read, not a feed that plays. No autoplay, no endless vertical scroll, no algorithm deciding what you see next, no 15 seconds of anything. That is the whole point.
+
+          Short video sits on the list of things we deliberately leave out, right next to images and direct messages. We are not going to build the thing that eats every other network's users, however many billions it makes.
+
+          So this pull request is closed. Thank you again, and keep the commits coming. May your feed always have an end.
+          EOF
+
+          closed=true
+          gh pr close "$PR_NUMBER" || closed=false
+
+          if [ "$commented" = false ] || [ "$closed" = false ]; then
+            echo "::warning title=no short video::Could not comment or close the pull request: the workflow token is read-only, which is the default for pull requests from forks."
+          fi
+
+          echo "::error title=no short video::The title, body, or branch mentions \"$match\"."
+          exit 1
